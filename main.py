@@ -109,7 +109,7 @@ def get_keycloak_user(token: str = Depends(oauth2_scheme)) -> Dict:
         print("Received Token:", token)
 
         # Replace this with your actual Keycloak public key or use `options={"verify_signature": False}`
-        public_key = "<Your-KEYCLOAK-PUBLIC-KEY>"
+        public_key = "abc"
 
         # Decode the JWT token and validate its signature using the public key
         payload = jwt.decode(token, public_key, algorithms=["RS256"], audience="<Your-CLIENT-ID>")
