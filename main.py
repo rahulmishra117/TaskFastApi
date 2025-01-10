@@ -1,6 +1,7 @@
+# Import all the requir module from fast apis
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -14,9 +15,11 @@ import os
 from aiocache import RedisCache
 from aiocache.serializers import JsonSerializer
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # Keycloak Setup
 from fastapi_keycloak import FastAPIKeycloak
-from fastapi.security import OAuth2PasswordBearer 
+from fastapi.security import OAuth2PasswordBearer
 import requests
 
 # FastAPI app initialization
@@ -34,6 +37,15 @@ engine = create_async_engine(DATABASE_URL, echo=True)
 Base = declarative_base()
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+#Adding a Middleware for cros  
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# Database schema for the Task Management APIs
 # Enum for task status
 class TaskStatus(enum.Enum):
     PENDING = "pending"
@@ -90,12 +102,33 @@ else:
 # Keycloak Integration (get_keycloak_user)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def get_keycloak_user(token: str = Depends(oauth2_scheme)):
-    # You can decode and verify the token here
+print("OAuth token",oauth2_scheme)
+def get_keycloak_user(token: str = Depends(oauth2_scheme)) -> Dict:
     try:
-        # Placeholder for the actual Keycloak user decoding
-        user = {"user_id": "some_user_id"}  # This should be decoded from the Keycloak token
+        # Print the received token for debugging
+        print("Received Token:", token)
+
+        # Replace this with your actual Keycloak public key or use `options={"verify_signature": False}`
+        public_key = "<Your-KEYCLOAK-PUBLIC-KEY>"
+
+        # Decode the JWT token and validate its signature using the public key
+        payload = jwt.decode(token, public_key, algorithms=["RS256"], audience="<Your-CLIENT-ID>")
+        print("Decoded token payload:", payload)
+
+        # Extract the user_id (subject) or any other relevant claim
+        user_id = payload.get("sub")  # "sub" is usually the user identifier in Keycloak tokens
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: Missing user ID")
+
+        # Return user information
+        user = {"user_id": user_id}
+        print("User:", user)  # To see the decoded user data
         return user
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.JWTClaimsError:
+        raise HTTPException(status_code=401, detail="Invalid token claims")
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -126,7 +159,7 @@ cache = RedisCache(
     port=6379,             
     serializer=JsonSerializer()
 )
-
+# Api end point for creating an task
 @app.post("/tasks", response_model=Task)
 async def create_task(task: CreateTask, db: AsyncSession = Depends(get_db), user: dict = Depends(get_keycloak_user)):
     with REQUEST_LATENCY.labels(method="POST", endpoint="/tasks").time():
@@ -188,7 +221,7 @@ async def update_task(task_id: str, updated_task: UpdateTask, db: AsyncSession =
             REQUEST_COUNT.labels(method="PUT", endpoint=f"/tasks/{task_id}", status_code="500").inc()
             raise HTTPException(status_code=500, detail=f"Failed to update task: {str(e)}")
 
-# Delete Task
+# //Api endpoint for deleteing an task from data base based of the task id 
 @app.delete("/tasks/{task_id}", response_model=dict)
 async def delete_task(task_id: str, db: AsyncSession = Depends(get_db), user: dict = Depends(get_keycloak_user)):
     with REQUEST_LATENCY.labels(method="DELETE", endpoint=f"/tasks/{task_id}").time():
@@ -214,7 +247,7 @@ async def delete_task(task_id: str, db: AsyncSession = Depends(get_db), user: di
             REQUEST_COUNT.labels(method="DELETE", endpoint=f"/tasks/{task_id}", status_code="500").inc()
             raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
 
-# Health Check
+# Api end point check health check of the database connections
 @app.get("/health", response_model=dict)
 async def health_check(db: AsyncSession = Depends(get_db)):
     with REQUEST_LATENCY.labels(method="GET", endpoint="/health").time():
